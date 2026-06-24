@@ -59,6 +59,7 @@ type Game struct {
 	Screen    tcell.Screen
 	Player    Player
 	Map       [][]Tile
+	Vision    *VisionMap
 	Monsters  []Monster
 	Floor     int
 	GameOver  bool
@@ -195,6 +196,9 @@ func (g *Game) GenerateFloor() {
 			}
 		}
 	}
+
+	g.Vision = NewVisionMap(MapWidth, MapHeight)
+	g.Vision.ComputeFOV(g.Map, g.Player.Pos.X, g.Player.Pos.Y, ViewRadius)
 }
 
 func (g *Game) CreateHorizontalTunnel(x1, x2, y int) {
@@ -236,27 +240,59 @@ func (g *Game) Render() {
 
 	for y := 0; y < MapHeight; y++ {
 		for x := 0; x < MapWidth; x++ {
+			visible := g.Vision.IsVisible(x, y)
+			explored := g.Vision.IsExplored(x, y)
+
+			if !visible && !explored {
+				continue
+			}
+
 			tile := g.Map[y][x]
 			r := tile.Rune
-			if tile.HasPotion {
+
+			if visible && tile.HasPotion {
 				r = TilePotion
 			}
+
 			style := tcell.StyleDefault
 			switch r {
 			case TileWall:
-				style = style.Foreground(tcell.ColorGray)
+				if visible {
+					style = style.Foreground(tcell.ColorGray)
+				} else {
+					style = style.Foreground(tcell.ColorDarkGray)
+				}
 			case TileFloor:
-				style = style.Foreground(tcell.ColorDimGray)
+				if visible {
+					style = style.Foreground(tcell.ColorDimGray)
+				} else {
+					r = '.'
+					style = style.Foreground(tcell.ColorDarkGray)
+				}
 			case TileStairs:
-				style = style.Foreground(tcell.ColorYellow)
+				if visible {
+					style = style.Foreground(tcell.ColorYellow)
+				} else {
+					style = style.Foreground(tcell.ColorOlive)
+				}
 			case TilePotion:
-				style = style.Foreground(tcell.ColorGreen)
+				if visible {
+					style = style.Foreground(tcell.ColorGreen)
+				}
 			}
+
+			if !visible && !tile.HasStairs && r != TileWall {
+				r = '.'
+			}
+
 			g.Screen.SetContent(x, y, r, nil, style)
 		}
 	}
 
 	for _, m := range g.Monsters {
+		if !g.Vision.IsVisible(m.Pos.X, m.Pos.Y) {
+			continue
+		}
 		style := tcell.StyleDefault
 		switch m.Rune {
 		case TileGoblin:
@@ -394,7 +430,7 @@ func (g *Game) MovePlayer(dx, dy int) {
 	if monster := g.GetMonsterAt(newX, newY); monster != nil {
 		g.Combat(monster)
 		g.MonsterTurn()
-		g.Message = ""
+		g.Vision.ComputeFOV(g.Map, g.Player.Pos.X, g.Player.Pos.Y, ViewRadius)
 		return
 	}
 
@@ -404,6 +440,7 @@ func (g *Game) MovePlayer(dx, dy int) {
 
 	g.Player.Pos.X = newX
 	g.Player.Pos.Y = newY
+	g.Vision.ComputeFOV(g.Map, g.Player.Pos.X, g.Player.Pos.Y, ViewRadius)
 
 	if g.Map[newY][newX].HasPotion {
 		healAmount := 10 + g.Floor*2
